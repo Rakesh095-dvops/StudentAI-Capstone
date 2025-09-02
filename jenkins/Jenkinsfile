@@ -1,0 +1,62 @@
+pipeline {
+    agent any
+
+    environment {
+        AWS_REGION = 'ap-south-1'
+        ECR_REGISTRY = '975050024946.dkr.ecr.ap-south-1.amazonaws.com'
+        BACKEND_IMAGE_NAME = 'studentai-backend'
+        FRONTEND_IMAGE_NAME = 'studentai-frontend'
+        IMAGE_TAG = "build-${BUILD_NUMBER}"
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Build & Push Backend Image') {
+            steps {
+                script {
+                    docker.withRegistry("https://_:", "ecr:ap-south-1:aws_creds") {
+                        def backendImage = docker.build("${ECR_REGISTRY}/${BACKEND_IMAGE_NAME}:${IMAGE_TAG}", "app/backend")
+                        backendImage.push()
+                    }
+                }
+            }
+        }
+
+        stage('Build & Push Frontend Image') {
+            steps {
+                script {
+                    docker.withRegistry("https://_:", "ecr:ap-south-1:aws_creds") {
+                        def frontendImage = docker.build("${ECR_REGISTRY}/${FRONTEND_IMAGE_NAME}:${IMAGE_TAG}", "app/frontend")
+                        frontendImage.push()
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to EKS') {
+            steps {
+                script {
+                    withCredentials([kubeconfigContent(credentialsId: 'kubeconfig', variable: 'KUBECONFIG_CONTENT')]) {
+                        sh '''
+                            export KUBECONFIG=./kubeconfig
+                            echo "$KUBECONFIG_CONTENT" > $KUBECONFIG
+                            
+                            helm upgrade --install studentai ./helm \\
+                                --namespace studentai \\
+                                --create-namespace \\
+                                --set backend.image.repository=${ECR_REGISTRY}/${BACKEND_IMAGE_NAME} \\
+                                --set backend.image.tag=${IMAGE_TAG} \\
+                                --set frontend.image.repository=${ECR_REGISTRY}/${FRONTEND_IMAGE_NAME} \\
+                                --set frontend.image.tag=${IMAGE_TAG}
+                        '''
+                    }
+                }
+            }
+        }
+    }
+}

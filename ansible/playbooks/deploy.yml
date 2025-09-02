@@ -1,0 +1,126 @@
+---
+- name: Deploy Node.js/React Application
+  hosts: webservers
+  vars:
+    app_name: "nodeapp"
+    deploy_user: "deploy"
+    app_port: 3000
+    build_number: "{{ build_number | default('latest') }}"
+    git_commit: "{{ git_commit | default('unknown') }}"
+
+  tasks:
+    - name: Create release directory
+      file:
+        path: "/opt/{{ app_name }}/releases/{{ build_number }}"
+        state: directory
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        mode: '0755'
+      become: yes
+
+    - name: Download application artifact
+      get_url:
+        url: "{{ artifact_url }}"
+        dest: "/opt/{{ app_name }}/releases/{{ build_number }}/{{ app_name }}-{{ build_number }}.tar.gz"
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        mode: '0644'
+      become: yes
+      when: artifact_url is defined
+
+    - name: Extract application
+      unarchive:
+        src: "/opt/{{ app_name }}/releases/{{ build_number }}/{{ app_name }}-{{ build_number }}.tar.gz"
+        dest: "/opt/{{ app_name }}/releases/{{ build_number }}/"
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        remote_src: yes
+      become: yes
+
+    - name: Install production dependencies
+      npm:
+        path: "/opt/{{ app_name }}/releases/{{ build_number }}"
+        production: yes
+      become_user: "{{ deploy_user }}"
+      become: yes
+
+    - name: Create symlink to current release
+      file:
+        src: "/opt/{{ app_name }}/releases/{{ build_number }}"
+        dest: "/opt/{{ app_name }}/current"
+        state: link
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+      become: yes
+      notify: restart application
+
+    - name: Deploy frontend static files
+      synchronize:
+        src: "/opt/{{ app_name }}/current/public/"
+        dest: "/var/www/{{ app_name }}/frontend/"
+        delete: yes
+      delegate_to: "{{ inventory_hostname }}"
+      become: yes
+      notify: reload nginx
+
+    - name: Generate PM2 ecosystem file
+      template:
+        src: ecosystem.config.js.j2
+        dest: "/opt/{{ app_name }}/ecosystem.config.js"
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        mode: '0644'
+      become: yes
+
+    - name: Configure Nginx site
+      template:
+        src: nginx-site.conf.j2
+        dest: "/etc/nginx/sites-available/{{ app_name }}"
+        backup: yes
+      become: yes
+      notify: reload nginx
+
+    - name: Enable Nginx site
+      file:
+        src: "/etc/nginx/sites-available/{{ app_name }}"
+        dest: "/etc/nginx/sites-enabled/{{ app_name }}"
+        state: link
+      become: yes
+      notify: reload nginx
+
+    - name: Remove default Nginx site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      become: yes
+      notify: reload nginx
+
+    - name: Start/Restart application with PM2
+      shell: |
+        cd /opt/{{ app_name }}
+        pm2 startOrRestart ecosystem.config.js --env production
+        pm2 save
+      become_user: "{{ deploy_user }}"
+      become: yes
+
+    - name: Clean old releases (keep last 5)
+      shell: |
+        cd /opt/{{ app_name }}/releases
+        ls -1dt */ | tail -n +6 | xargs rm -rf
+      become_user: "{{ deploy_user }}"
+      become: yes
+      ignore_errors: yes
+
+  handlers:
+    - name: restart application
+      shell: |
+        cd /opt/{{ app_name }}
+        pm2 restart ecosystem.config.js
+      become_user: "{{ deploy_user }}"
+      become: yes
+
+    - name: reload nginx
+      systemd:
+        name: nginx
+        state: reloaded
+      become: yes

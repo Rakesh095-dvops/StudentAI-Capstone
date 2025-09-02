@@ -1,0 +1,106 @@
+---
+- name: Bootstrap Node.js Application Servers
+  hosts: webservers
+  become: yes
+  vars:
+    nodejs_version: "18"
+    deploy_user: "deploy"
+    app_name: "nodeapp"
+
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install system dependencies
+      apt:
+        name:
+          - curl
+          - gnupg2
+          - software-properties-common
+          - nginx
+          - ufw
+          - logrotate
+        state: present
+
+    - name: Add NodeSource repository key
+      apt_key:
+        url: https://deb.nodesource.com/gpgkey/nodesource.gpg.key
+        state: present
+
+    - name: Add NodeSource repository
+      apt_repository:
+        repo: "deb https://deb.nodesource.com/node_{{ nodejs_version }}.x {{ ansible_distribution_release }} main"
+        state: present
+
+    - name: Install Node.js
+      apt:
+        name: nodejs
+        state: present
+        update_cache: yes
+
+    - name: Install PM2 globally
+      npm:
+        name: pm2
+        global: yes
+        state: present
+
+    - name: Create deploy user
+      user:
+        name: "{{ deploy_user }}"
+        shell: /bin/bash
+        home: "/home/{{ deploy_user }}"
+        create_home: yes
+        groups: sudo
+        append: yes
+
+    - name: Create application directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        mode: '0755'
+      loop:
+        - "/opt/{{ app_name }}"
+        - "/opt/{{ app_name }}/backend"
+        - "/opt/{{ app_name }}/releases"
+        - "/var/www/{{ app_name }}"
+        - "/var/www/{{ app_name }}/frontend"
+        - "/var/log/{{ app_name }}"
+
+    - name: Setup sudo access for deploy user
+      lineinfile:
+        path: /etc/sudoers.d/deploy
+        create: yes
+        line: "{{ deploy_user }} ALL=(ALL) NOPASSWD: /bin/systemctl restart {{ app_name }}, /bin/systemctl start {{ app_name }}, /bin/systemctl stop {{ app_name }}, /bin/systemctl reload nginx"
+        validate: visudo -cf %s
+
+    - name: Configure UFW firewall
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+      loop:
+        - "22"   # SSH
+        - "80"   # HTTP
+        - "443"  # HTTPS
+
+    - name: Enable UFW
+      ufw:
+        state: enabled
+        policy: deny
+        direction: incoming
+
+    - name: Setup PM2 startup script
+      shell: |
+        sudo -u {{ deploy_user }} pm2 startup systemd -u {{ deploy_user }} --hp /home/{{ deploy_user }}
+        pm2 startup systemd -u {{ deploy_user }} --hp /home/{{ deploy_user }}
+      args:
+        creates: /etc/systemd/system/pm2-{{ deploy_user }}.service
+
+    - name: Enable PM2 service
+      systemd:
+        name: "pm2-{{ deploy_user }}"
+        enabled: yes
+        state: started

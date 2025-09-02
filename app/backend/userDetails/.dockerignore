@@ -1,0 +1,12 @@
+# .dockerignore
+
+# Exclude Docker related files
+Dockerfile
+.dockerignore
+
+# Exclude source control folders
+.git
+.gitignore
+
+# Exclude Node.js dependencies (if any)
+node_modules

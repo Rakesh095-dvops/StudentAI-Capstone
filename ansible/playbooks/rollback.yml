@@ -1,0 +1,67 @@
+---
+- name: Rollback Node.js Application
+  hosts: webservers
+  vars:
+    app_name: "nodeapp"
+    deploy_user: "deploy"
+    rollback_to: "{{ rollback_to | default('previous') }}"
+
+  tasks:
+    - name: Get list of releases
+      find:
+        paths: "/opt/{{ app_name }}/releases"
+        file_type: directory
+      register: releases
+      become_user: "{{ deploy_user }}"
+      become: yes
+
+    - name: Sort releases by modification time
+      set_fact:
+        sorted_releases: "{{ releases.files | sort(attribute='mtime', reverse=True) }}"
+
+    - name: Determine rollback target
+      set_fact:
+        rollback_target: "{{ sorted_releases[1].path if rollback_to == 'previous' else '/opt/' + app_name + '/releases/' + rollback_to }}"
+
+    - name: Verify rollback target exists
+      stat:
+        path: "{{ rollback_target }}"
+      register: rollback_path
+      become: yes
+
+    - name: Fail if rollback target doesn't exist
+      fail:
+        msg: "Rollback target {{ rollback_target }} does not exist"
+      when: not rollback_path.stat.exists
+
+    - name: Update symlink to rollback target
+      file:
+        src: "{{ rollback_target }}"
+        dest: "/opt/{{ app_name }}/current"
+        state: link
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+      become: yes
+
+    - name: Deploy frontend files from rollback
+      synchronize:
+        src: "{{ rollback_target }}/public/"
+        dest: "/var/www/{{ app_name }}/frontend/"
+        delete: yes
+      delegate_to: "{{ inventory_hostname }}"
+      become: yes
+
+    - name: Restart application with PM2
+      shell: |
+        cd /opt/{{ app_name }}
+        pm2 restart ecosystem.config.js
+      become_user: "{{ deploy_user }}"
+      become: yes
+
+    - name: Verify application is running
+      uri:
+        url: "http://localhost:3000/health"
+        method: GET
+        timeout: 10
+      retries: 3
+      delay: 5

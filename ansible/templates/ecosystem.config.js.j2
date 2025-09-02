@@ -1,0 +1,36 @@
+module.exports = {
+  apps: [{
+    name: '{{ app_name }}',
+    script: './server.js',
+    cwd: '/opt/{{ app_name }}/current',
+    instances: 'max',
+    exec_mode: 'cluster',
+    env: {
+      NODE_ENV: 'development',
+      PORT: {{ app_port }}
+    },
+    env_production: {
+      NODE_ENV: 'production',
+      PORT: {{ app_port }}
+    },
+    // Logging
+    log_file: '/var/log/{{ app_name }}/combined.log',
+    out_file: '/var/log/{{ app_name }}/out.log',
+    error_file: '/var/log/{{ app_name }}/error.log',
+    log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+    
+    // Advanced features
+    watch: false,
+    max_memory_restart: '500M',
+    restart_delay: 4000,
+    max_restarts: 10,
+    min_uptime: '10s',
+    
+    // Health monitoring
+    health_check_delay: 30000,
+    
+    // Graceful start/stop
+    listen_timeout: 3000,
+    kill_timeout: 5000
+  }]
+};
