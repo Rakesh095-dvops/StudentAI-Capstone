@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         AWS_REGION = 'ap-south-1'
-        ECR_REGISTRY = '975050024946.dkr.ecr.ap-south-1.amazonaws.com'
+        ECR_REGISTRY = '{ACCOUNT_ID}.dkr.ecr.{AWS_REGION}.amazonaws.com'
         BACKEND_IMAGE_NAME = 'studentai-backend'
         FRONTEND_IMAGE_NAME = 'studentai-frontend'
         IMAGE_TAG = "build-${BUILD_NUMBER}"
